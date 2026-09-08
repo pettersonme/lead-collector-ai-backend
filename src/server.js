@@ -3,17 +3,28 @@ import cors from "cors";
 import * as cheerio from "cheerio";
 import { URL } from "node:url";
 
-
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 
+app.use(cors());
+app.use(express.json({ limit: "2mb" }));
 
-app.use(cors({origin:true}));
 
-app.use(express.json({
-    limit:"1mb"
-}));
+// TESTE DO SERVIDOR
+app.get("/", (req,res)=>{
+    res.json({
+        status:"online",
+        message:"Lead Collector AI API funcionando"
+    });
+});
+
+
+app.get("/health",(req,res)=>{
+    res.json({
+        online:true
+    });
+});
 
 
 
@@ -25,20 +36,13 @@ function cleanPhone(value){
 }
 
 
-
 function cleanEmail(value){
 
     const email = String(value || "")
     .trim()
     .toLowerCase();
 
-
-    if(email.includes("@")){
-        return email;
-    }
-
-
-    return "";
+    return email.includes("@") ? email : "";
 
 }
 
@@ -47,13 +51,10 @@ function cleanEmail(value){
 function absolute(link,base){
 
     try{
-
         return new URL(link,base).href;
-
-    }catch{
-
+    }
+    catch{
         return null;
-
     }
 
 }
@@ -76,70 +77,41 @@ function sameDomain(a,b){
 
 
 
-
 async function fetchHTML(url){
-
 
     try{
 
-
         const response = await fetch(url,{
-
             headers:{
                 "User-Agent":
                 "Mozilla/5.0"
-            },
-
-            signal:
-            AbortSignal.timeout(15000)
-
+            }
         });
-
-
-        const type =
-        response.headers.get(
-            "content-type"
-        ) || "";
-
-
-        if(!type.includes("text/html")){
-            return "";
-        }
 
 
         return await response.text();
 
 
+    }catch(e){
 
-    }catch(error){
-
-        console.log(
-            "Erro:",
-            url
-        );
-
+        console.log(e);
         return "";
 
     }
-
 
 }
 
 
 
-
-
-
-function extractData(html,url){
-
+function extract(html,url){
 
     const $ = cheerio.load(html);
 
 
     let data={
 
-        name:"",
-        phone:"",
+        nome:"",
+        whatsapp:"",
         email:"",
         url:url
 
@@ -147,98 +119,90 @@ function extractData(html,url){
 
 
 
-    // nome
-
-    data.name =
+    data.nome =
     $("h1").first().text().trim()
     ||
     $("title").text().trim();
 
 
 
-
-    // whatsapp tel
-
-    $("a").each((_,el)=>{
-
+    $("a").each((i,el)=>{
 
         const href =
         $(el).attr("href") || "";
 
 
-        if(
-            href.includes("wa.me")
-            ||
-            href.includes("whatsapp")
-        ){
+        if(href.includes("whatsapp")){
 
-            data.phone =
-            cleanPhone(href);
+            data.whatsapp =
+            href;
 
         }
 
+
+        if(href.includes("tel:")){
+
+            data.whatsapp =
+            cleanPhone(
+                href.replace("tel:","")
+            );
+
+        }
+
+
+        if(href.includes("mailto:")){
+
+            data.email =
+            cleanEmail(
+                href.replace("mailto:","")
+            );
+
+        }
 
 
     });
 
 
 
-
-
-    // telefone normal
-
-    if(!data.phone){
-
-
-        const text =
-        $("body")
-        .text()
-        .replace(/\s+/g," ");
+    const texto =
+    $("body")
+    .text()
+    .replace(/\s+/g," ");
 
 
 
-        const phones =
-        text.match(
-        /(\(?\d{2}\)?\s?\d{4,5}[- ]?\d{4})/g
+    if(!data.email){
+
+        const email =
+        texto.match(
+        /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
         );
 
 
-        if(phones){
+        if(email){
 
-            data.phone =
-            cleanPhone(
-                phones[0]
-            );
+            data.email=email[0];
 
         }
-
 
     }
 
 
 
+    if(!data.whatsapp){
 
-    // email
-
-
-    const body =
-    $("body")
-    .text();
-
-
-
-    const emails =
-    body.match(
-    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
-    );
-
-
-    if(emails){
-
-        data.email =
-        cleanEmail(
-            emails[0]
+        const phone =
+        texto.match(
+        /\(?\d{2}\)?\s?\d{4,5}-?\d{4}/
         );
+
+
+        if(phone){
+
+            data.whatsapp =
+            cleanPhone(phone[0]);
+
+        }
 
     }
 
@@ -246,280 +210,118 @@ function extractData(html,url){
 
     return data;
 
-
 }
 
 
 
 
-
-
-
-
-app.get("/",(req,res)=>{
-
-
-    res.json({
-
-        status:"online",
-
-        message:
-        "Lead Collector AI funcionando"
-
-    });
-
-
-});
-
-
-
-
-
-
-
-app.post("/api/collect",async(req,res)=>{
+app.post("/api/collect", async(req,res)=>{
 
 
 try{
 
 
-    const target =
-    String(req.body.url || "")
-    .trim();
+const site=req.body.url;
 
 
+if(!site){
 
-    if(!target){
+return res.status(400).json({
+error:"URL obrigatória"
+});
 
-        return res.status(400).json({
+}
 
-            error:
-            "URL obrigatória"
 
-        });
 
-    }
+let html =
+await fetchHTML(site);
 
 
 
+const $=cheerio.load(html);
 
-    const base =
-    new URL(target).href;
 
 
+let links=[];
 
 
-    const visited =
-    new Set();
+$("a").each((i,el)=>{
 
 
+let href =
+absolute(
+$(el).attr("href"),
+site
+);
 
-    const profiles =
-    new Set();
 
 
+if(
+href &&
+sameDomain(href,site)
+){
 
-    const queue=[
-        base
-    ];
+links.push(href);
 
+}
 
 
-    let pages=0;
+});
 
 
 
-    while(queue.length){
+links=[
+...new Set(links)
+];
 
 
 
-        const current =
-        queue.shift();
+let contatos=[];
 
 
+for(
+const link of links.slice(0,100)
+){
 
-        if(visited.has(current)){
-            continue;
-        }
+const page =
+await fetchHTML(link);
 
 
+if(page){
 
-        visited.add(current);
+const dados =
+extract(page,link);
 
 
+contatos.push(dados);
 
-        const html =
-        await fetchHTML(current);
+}
 
+}
 
 
-        if(!html){
-            continue;
-        }
 
+res.json({
 
+status:"ok",
 
-        pages++;
+paginasVisitadas:
+links.length,
 
+contatos
 
+});
 
-        const $ =
-        cheerio.load(html);
 
+}catch(e){
 
 
+res.status(500).json({
 
+erro:e.message
 
-        $("a[href]").each((_,el)=>{
-
-
-            const href =
-            $(el).attr("href");
-
-
-
-            const link =
-            absolute(
-                href,
-                current
-            );
-
-
-
-            if(!link){
-                return;
-            }
-
-
-
-
-            if(!sameDomain(link,base)){
-                return;
-            }
-
-
-
-
-            const path =
-            new URL(link)
-            .pathname;
-
-
-
-
-            /*
-              pega somente:
-
-              /tai
-              /nome
-              
-              ignora:
-
-              /
-              /login
-              /categorias
-            */
-
-
-            if(
-                path.split("/")
-                .filter(Boolean)
-                .length === 1
-            ){
-
-                profiles.add(link);
-
-            }
-
-
-        });
-
-
-
-    }
-
-
-
-
-
-
-
-    const contacts=[];
-
-
-
-    for(
-        const profile of profiles
-    ){
-
-
-        const html =
-        await fetchHTML(profile);
-
-
-
-        if(!html){
-            continue;
-        }
-
-
-
-        const data =
-        extractData(
-            html,
-            profile
-        );
-
-
-
-        contacts.push(data);
-
-
-    }
-
-
-
-
-
-
-    res.json({
-
-        status:"ok",
-
-        pagesVisited:
-        pages,
-
-
-        profilesFound:
-        profiles.size,
-
-
-        total:
-        contacts.length,
-
-
-        contacts
-
-
-    });
-
-
-
-
-
-}catch(error){
-
-
-    console.log(error);
-
-
-    res.status(500).json({
-
-        error:
-        error.message
-
-    });
-
+});
 
 
 }
@@ -527,20 +329,14 @@ try{
 
 
 });
-
-
-
 
 
 
 
 app.listen(PORT,()=>{
 
-
 console.log(
-"Lead Collector AI rodando na porta "
-+PORT
+"Servidor rodando na porta "+PORT
 );
-
 
 });
