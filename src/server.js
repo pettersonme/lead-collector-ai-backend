@@ -10,175 +10,303 @@ app.use(cors({ origin: true }));
 app.use(express.json({ limit: "200kb" }));
 
 
-function normalizePhone(raw){
-  const digits = String(raw || "").replace(/\D/g,"");
+// ===============================
+// NORMALIZA TELEFONE
+// ===============================
 
-  if(digits.length < 10 || digits.length > 15)
+function normalizePhone(raw){
+
+  let digits = String(raw || "")
+  .replace(/\D/g,"");
+
+
+  // remove código do Brasil duplicado
+  if(digits.startsWith("55") && digits.length > 11){
+    digits = digits.substring(2);
+  }
+
+
+  if(
+    digits.length !== 10 &&
+    digits.length !== 11
+  ){
     return "";
+  }
+
 
   return digits;
+
 }
 
+
+// ===============================
+// NORMALIZA EMAIL
+// ===============================
 
 function normalizeEmail(raw){
-  return String(raw || "")
-    .trim()
-    .toLowerCase();
+
+  let email = String(raw || "")
+  .trim()
+  .toLowerCase();
+
+
+  // remove parâmetros do mailto
+  email = email.split("?")[0];
+
+
+  if(
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ){
+    return "";
+  }
+
+
+  return email;
+
 }
 
+
+
+// ===============================
+// UTILIDADES
+// ===============================
 
 function sameHost(a,b){
 
   try{
+
     return new URL(a).host === new URL(b).host;
-  }
-  catch{
+
+  }catch{
+
     return false;
+
   }
 
 }
 
 
-function absolute(href, base){
+
+function absolute(href,base){
 
   try{
-    return new URL(href, base).href;
-  }
-  catch{
+
+    return new URL(href,base).href;
+
+  }catch{
+
     return null;
+
   }
 
 }
 
 
 
-function extractContacts(html, sourceUrl, city){
+// ===============================
+// EXTRAÇÃO DE LEADS
+// ===============================
 
-  const $ = cheerio.load(html);
-
-  const contacts = [];
+function extractContacts(html,sourceUrl,city){
 
 
-  const push = (type,value)=>{
+const $ = cheerio.load(html);
 
-    if(!value) return;
 
-    contacts.push({
-      type,
-      value,
-      sourceUrl,
-      city
-    });
-
-  };
+const contacts=[];
 
 
 
-  $("a[href^='tel:']").each((_,el)=>{
+function push(type,value){
 
-    const phone = normalizePhone(
-      $(el)
-      .attr("href")
-      .replace("tel:","")
-    );
+if(!value) return;
 
 
-    if(phone)
-      push("phone",phone);
+contacts.push({
 
-  });
+type,
+value,
+sourceUrl,
+city
 
-
-
-  $("a[href^='mailto:']").each((_,el)=>{
-
-
-    const email = normalizeEmail(
-      $(el)
-      .attr("href")
-      .replace("mailto:","")
-    );
+});
 
 
-    if(email)
-      push("email",email);
-
-
-  });
+}
 
 
 
-  const text = $("body")
-    .text()
-    .replace(/\s+/g," ");
+// TELEFONES LINK
+
+$("a[href^='tel:']").each((_,el)=>{
 
 
-
-  for(const match of text.matchAll(
-    /(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?(?:9?\d{4})[\s.-]?\d{4}/g
-  )){
-
-
-    const phone = normalizePhone(match[0]);
-
-
-    if(phone)
-      push("phone",phone);
+const phone =
+normalizePhone(
+$(el)
+.attr("href")
+.replace("tel:","")
+);
 
 
-  }
+if(phone){
+
+push(
+"phone",
+phone
+);
+
+}
+
+
+});
 
 
 
 
-  for(const match of text.matchAll(
-    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
-  )){
+// EMAILS LINK
+
+$("a[href^='mailto:']").each((_,el)=>{
 
 
-    push(
-      "email",
-      normalizeEmail(match[0])
-    );
+const email =
+normalizeEmail(
+$(el)
+.attr("href")
+.replace("mailto:","")
+);
 
 
-  }
+if(email){
+
+push(
+"email",
+email
+);
+
+}
+
+
+});
 
 
 
-  return contacts;
+
+// TEXTO DA PAGINA
+
+const text =
+$("body")
+.text()
+.replace(/\s+/g," ");
+
+
+
+
+// TELEFONES NO TEXTO
+
+for(
+const match of text.matchAll(
+/(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?(?:9?\d{4})[\s.-]?\d{4}/g
+)
+){
+
+
+const phone =
+normalizePhone(match[0]);
+
+
+if(phone){
+
+push(
+"phone",
+phone
+);
+
+}
+
+
+}
+
+
+
+// EMAILS NO TEXTO
+
+for(
+const match of text.matchAll(
+/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
+)
+){
+
+
+const email =
+normalizeEmail(match[0]);
+
+
+if(email){
+
+push(
+"email",
+email
+);
+
+}
+
+
+}
+
+
+
+return contacts;
+
 
 }
 
 
 
 
+// ===============================
+// BUSCAR PAGINA
+// ===============================
 
 async function fetchPage(url){
 
 
-  const response = await fetch(url,{
+const response =
+await fetch(
+url,
+{
 
-    headers:{
-      "User-Agent":
-      "Mozilla/5.0 LeadCollectorAI"
-    }
+headers:{
 
-  });
+"User-Agent":
+"Mozilla/5.0 LeadCollectorAI"
 
+}
 
-
-  const type =
-    response.headers.get("content-type") || "";
-
-
-
-  if(!type.includes("text/html"))
-    return null;
+}
+);
 
 
 
-  return await response.text();
+const type =
+response.headers.get(
+"content-type"
+)
+|| "";
+
+
+
+if(
+!type.includes("text/html")
+){
+
+return null;
+
+}
+
+
+
+return await response.text();
 
 
 }
@@ -186,18 +314,20 @@ async function fetchPage(url){
 
 
 
+// ===============================
+// ROTA PRINCIPAL
+// ===============================
 
-// NOVA ROTA INICIAL
-app.get("/", (req,res)=>{
+app.get("/",(req,res)=>{
 
-  res.json({
+res.json({
 
-    status:"online",
+status:"online",
 
-    message:
-    "Lead Collector AI API funcionando"
+message:
+"Lead Collector AI API funcionando"
 
-  });
+});
 
 });
 
@@ -205,17 +335,21 @@ app.get("/", (req,res)=>{
 
 
 
-// STATUS DA API
+// ===============================
+// HEALTH CHECK
+// ===============================
+
 app.get("/health",(req,res)=>{
 
 
-  res.json({
+res.json({
 
-    online:true,
+online:true,
 
-    service:"Lead Collector AI"
+service:
+"Lead Collector AI"
 
-  });
+});
 
 
 });
@@ -224,9 +358,11 @@ app.get("/health",(req,res)=>{
 
 
 
+// ===============================
+// COLETAR LEADS
+// ===============================
 
-// COLETOR DE LEADS
-app.post("/api/collect", async(req,res)=>{
+app.post("/api/collect",async(req,res)=>{
 
 
 try{
@@ -244,42 +380,40 @@ String(req.body.city || "")
 
 
 
-
 if(!target){
-
 
 return res.status(400).json({
 
-error:"Informe uma URL"
+error:
+"Informe uma URL"
 
 });
-
 
 }
 
 
 
 
-const start = new URL(target);
+const start =
+new URL(target);
 
 
 
 const queue=[
-
 start.href
-
 ];
 
 
+const visited =
+new Set();
 
-const visited=new Set();
 
 
 const contacts=[];
 
 
-const unique=new Set();
-
+const unique =
+new Set();
 
 
 
@@ -297,21 +431,21 @@ queue.shift();
 
 
 
-
 if(
 visited.has(current) ||
-!sameHost(current,start.href)
+!sameHost(
+current,
+start.href
 )
+){
 
 continue;
 
-
+}
 
 
 
 visited.add(current);
-
-
 
 
 
@@ -321,13 +455,11 @@ await fetchPage(current)
 
 
 
+if(!html){
 
-
-if(!html)
 continue;
 
-
-
+}
 
 
 
@@ -340,14 +472,13 @@ city
 
 
 
-
-
-
 found.forEach(item=>{
 
 
 const key =
-item.type + ":" + item.value;
+item.type +
+":" +
+item.value;
 
 
 
@@ -362,17 +493,15 @@ contacts.push(item);
 }
 
 
-
 });
 
 
 
 
+// encontra links internos
 
-
-const $ = cheerio.load(html);
-
-
+const $ =
+cheerio.load(html);
 
 
 
@@ -387,11 +516,12 @@ current
 
 
 
-
-
 if(
 link &&
-sameHost(link,start.href) &&
+sameHost(
+link,
+start.href
+) &&
 !visited.has(link)
 ){
 
@@ -400,43 +530,39 @@ queue.push(link);
 }
 
 
-
 });
 
 
 
-
 }
-
-
 
 
 
 
 res.json({
 
-status:"success",
+status:
+"success",
 
 pagesVisited:
 visited.size,
 
+totalContacts:
+contacts.length,
+
 contacts
 
-
 });
-
-
-
 
 
 
 }catch(error){
 
 
-
 res.status(500).json({
 
-error:error.message
+error:
+error.message
 
 });
 
@@ -451,15 +577,15 @@ error:error.message
 
 
 
-
+// ===============================
+// START SERVER
+// ===============================
 
 app.listen(PORT,()=>{
 
 
 console.log(
-
 `API online na porta ${PORT}`
-
 );
 
 
