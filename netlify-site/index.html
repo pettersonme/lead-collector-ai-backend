@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Lead Collector AI</title>
+
+<style>
+body{
+font-family:Arial;
+background:#111;
+color:white;
+padding:40px;
+}
+
+input,button{
+width:100%;
+padding:15px;
+margin-top:10px;
+border-radius:8px;
+}
+
+button{
+background:#00c853;
+color:white;
+border:none;
+cursor:pointer;
+}
+
+pre{
+background:#222;
+padding:20px;
+margin-top:20px;
+}
+</style>
+
+</head>
+
+<body>
+
+
+<h1>Lead Collector AI</h1>
+
+<input id="url" placeholder="URL da empresa">
+
+<input id="city" placeholder="Cidade">
+
+
+<button onclick="collect()">
+Encontrar Leads
+</button>
+
+
+<pre id="result">
+Aguardando...
+</pre>
+
+
+<script>
+
+async function collect(){
+
+const url =
+document.getElementById("url").value;
+
+
+const city =
+document.getElementById("city").value;
+
+
+const response =
+await fetch(
+"https://lead-collector-api-zwha.onrender.com/api/collect",
+{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+url,
+city
+})
+});
+
+
+const data =
+await response.json();
+
+
+document.getElementById("result")
+.innerHTML =
+JSON.stringify(data,null,2);
+
+
+}
+
+</script>
+
+
+</body>
+</html>
