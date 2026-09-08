@@ -6,57 +6,178 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 
+// ==============================
+// MIDDLEWARES
+// ==============================
+
 app.use(cors({
-    origin:"*"
+    origin: "*",
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"]
 }));
 
 app.use(express.json());
 
 
-app.get("/", (req,res)=>{
+// ==============================
+// ROTA PRINCIPAL
+// ==============================
 
-    res.json({
-        status:"online",
-        message:"Lead Collector AI API funcionando"
+app.get("/", (req, res) => {
+
+    res.status(200).json({
+
+        status: "online",
+
+        service: "Lead Collector AI API",
+
+        message: "Servidor funcionando corretamente",
+
+        version: "1.0.0",
+
+        timestamp: new Date()
+
     });
 
 });
 
 
-app.get("/health",(req,res)=>{
+// ==============================
+// HEALTH CHECK RENDER
+// ==============================
 
-    res.json({
-        online:true,
-        service:"Lead Collector AI"
+app.get("/health", (req, res) => {
+
+    res.status(200).json({
+
+        online: true,
+
+        service: "Lead Collector AI",
+
+        uptime: process.uptime(),
+
+        timestamp: new Date()
+
     });
 
 });
 
 
+// ==============================
+// COLETAR LEADS
+// ==============================
 
-app.post("/api/collect",(req,res)=>{
-
-    const url = req.body.url || "";
+app.post("/api/collect", async (req, res) => {
 
 
-    res.json({
+    try {
 
-        status:"success",
 
-        message:"API recebeu a URL",
+        const {
 
-        url:url,
+            url,
 
-        contacts:[
+            company,
+
+            name
+
+        } = req.body;
+
+
+
+        if(!url){
+
+            return res.status(400).json({
+
+                status:"error",
+
+                message:"URL não enviada"
+
+            });
+
+        }
+
+
+
+        // Aqui futuramente entra:
+        // - scraping
+        // - IA
+        // - busca Google Maps
+        // - Hunter API
+        // - Apollo
+        // - enriquecimento de dados
+
+
+        const leads = [
 
             {
-                name:"Teste",
-                phone:"",
+
+                name: name || "Lead Teste",
+
+                company: company || "Empresa Teste",
+
                 email:"",
-                url:url
+
+                phone:"",
+
+                source:url
+
             }
 
-        ]
+        ];
+
+
+
+        res.status(200).json({
+
+            status:"success",
+
+            message:"Coleta realizada com sucesso",
+
+            url:url,
+
+            total:leads.length,
+
+            leads:leads
+
+        });
+
+
+
+    } catch(error){
+
+
+        res.status(500).json({
+
+            status:"error",
+
+            message:"Erro interno",
+
+            error:error.message
+
+        });
+
+
+    }
+
+
+});
+
+
+// ==============================
+// TESTE POST
+// ==============================
+
+app.post("/api/test", (req,res)=>{
+
+
+    res.json({
+
+        success:true,
+
+        body:req.body,
+
+        message:"POST funcionando"
 
     });
 
@@ -64,11 +185,43 @@ app.post("/api/collect",(req,res)=>{
 });
 
 
+// ==============================
+// ERRO 404
+// ==============================
+
+app.use((req,res)=>{
+
+
+    res.status(404).json({
+
+        status:"error",
+
+        message:"Rota não encontrada",
+
+        route:req.originalUrl
+
+    });
+
+
+});
+
+
+// ==============================
+// START SERVER
+// ==============================
 
 app.listen(PORT,()=>{
 
-    console.log(
-        "Lead Collector AI rodando na porta "+PORT
-    );
+
+    console.log("--------------------------------");
+
+    console.log("Lead Collector AI iniciado");
+
+    console.log("Porta:", PORT);
+
+    console.log("Status: ONLINE");
+
+    console.log("--------------------------------");
+
 
 });
