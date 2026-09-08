@@ -4,15 +4,17 @@ import * as cheerio from "cheerio";
 import { URL } from "node:url";
 
 const app = express();
+
 const PORT = process.env.PORT || 10000;
 
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: "200kb" }));
+
+app.use(cors({ origin:true }));
+
+app.use(express.json({
+  limit:"500kb"
+}));
 
 
-// ===============================
-// NORMALIZA TELEFONE
-// ===============================
 
 function normalizePhone(raw){
 
@@ -20,15 +22,14 @@ function normalizePhone(raw){
   .replace(/\D/g,"");
 
 
-  // remove código do Brasil duplicado
   if(digits.startsWith("55") && digits.length > 11){
     digits = digits.substring(2);
   }
 
 
   if(
-    digits.length !== 10 &&
-    digits.length !== 11
+    digits.length < 10 ||
+    digits.length > 11
   ){
     return "";
   }
@@ -39,9 +40,7 @@ function normalizePhone(raw){
 }
 
 
-// ===============================
-// NORMALIZA EMAIL
-// ===============================
+
 
 function normalizeEmail(raw){
 
@@ -50,12 +49,10 @@ function normalizeEmail(raw){
   .toLowerCase();
 
 
-  // remove parâmetros do mailto
-  email = email.split("?")[0];
-
-
   if(
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    !email.includes("@") ||
+    email.includes("?") ||
+    email.includes("=")
   ){
     return "";
   }
@@ -67,47 +64,45 @@ function normalizeEmail(raw){
 
 
 
-// ===============================
-// UTILIDADES
-// ===============================
+
 
 function sameHost(a,b){
 
-  try{
+try{
 
-    return new URL(a).host === new URL(b).host;
+return new URL(a).hostname === new URL(b).hostname;
 
-  }catch{
+}catch{
 
-    return false;
-
-  }
+return false;
 
 }
+
+}
+
+
 
 
 
 function absolute(href,base){
 
-  try{
+try{
 
-    return new URL(href,base).href;
+return new URL(href,base).href;
 
-  }catch{
+}catch{
 
-    return null;
+return null;
 
-  }
+}
 
 }
 
 
 
-// ===============================
-// EXTRAÇÃO DE LEADS
-// ===============================
 
-function extractContacts(html,sourceUrl,city){
+
+function extractContacts(html,url,city){
 
 
 const $ = cheerio.load(html);
@@ -116,17 +111,29 @@ const $ = cheerio.load(html);
 const contacts=[];
 
 
+const title =
+$("title")
+.text()
+.trim();
 
-function push(type,value){
 
-if(!value) return;
+function add(type,value){
+
+
+if(!value)
+return;
 
 
 contacts.push({
 
 type,
+
 value,
-sourceUrl,
+
+page:url,
+
+title,
+
 city
 
 });
@@ -136,9 +143,10 @@ city
 
 
 
-// TELEFONES LINK
 
-$("a[href^='tel:']").each((_,el)=>{
+
+$("a[href^='tel:']")
+.each((_,el)=>{
 
 
 const phone =
@@ -149,14 +157,7 @@ $(el)
 );
 
 
-if(phone){
-
-push(
-"phone",
-phone
-);
-
-}
+add("phone",phone);
 
 
 });
@@ -164,9 +165,9 @@ phone
 
 
 
-// EMAILS LINK
 
-$("a[href^='mailto:']").each((_,el)=>{
+$("a[href^='mailto:']")
+.each((_,el)=>{
 
 
 const email =
@@ -174,17 +175,11 @@ normalizeEmail(
 $(el)
 .attr("href")
 .replace("mailto:","")
+.split("?")[0]
 );
 
 
-if(email){
-
-push(
-"email",
-email
-);
-
-}
+add("email",email);
 
 
 });
@@ -192,7 +187,6 @@ email
 
 
 
-// TEXTO DA PAGINA
 
 const text =
 $("body")
@@ -202,34 +196,24 @@ $("body")
 
 
 
-// TELEFONES NO TEXTO
 
 for(
 const match of text.matchAll(
-/(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?(?:9?\d{4})[\s.-]?\d{4}/g
+/(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?\d{4,5}[-\s]?\d{4}/g
 )
 ){
 
-
-const phone =
-normalizePhone(match[0]);
-
-
-if(phone){
-
-push(
+add(
 "phone",
-phone
+normalizePhone(match[0])
 );
 
-}
-
 
 }
 
 
 
-// EMAILS NO TEXTO
+
 
 for(
 const match of text.matchAll(
@@ -238,18 +222,10 @@ const match of text.matchAll(
 ){
 
 
-const email =
-normalizeEmail(match[0]);
-
-
-if(email){
-
-push(
+add(
 "email",
-email
+normalizeEmail(match[0])
 );
-
-}
 
 
 }
@@ -258,67 +234,60 @@ email
 
 return contacts;
 
-
 }
 
 
 
 
-// ===============================
-// BUSCAR PAGINA
-// ===============================
 
 async function fetchPage(url){
 
 
+try{
+
+
 const response =
-await fetch(
-url,
-{
-
+await fetch(url,{
 headers:{
-
 "User-Agent":
 "Mozilla/5.0 LeadCollectorAI"
-
 }
-
-}
-);
-
+});
 
 
 const type =
 response.headers.get(
 "content-type"
-)
-|| "";
+) || "";
 
 
 
 if(
 !type.includes("text/html")
-){
-
+)
 return null;
-
-}
 
 
 
 return await response.text();
 
 
+
+}catch{
+
+return null;
+
+}
+
+
 }
 
 
 
 
-// ===============================
-// ROTA PRINCIPAL
-// ===============================
 
 app.get("/",(req,res)=>{
+
 
 res.json({
 
@@ -329,15 +298,12 @@ message:
 
 });
 
+
 });
 
 
 
 
-
-// ===============================
-// HEALTH CHECK
-// ===============================
 
 app.get("/health",(req,res)=>{
 
@@ -358,11 +324,10 @@ service:
 
 
 
-// ===============================
-// COLETAR LEADS
-// ===============================
 
-app.post("/api/collect",async(req,res)=>{
+
+app.post("/api/collect",
+async(req,res)=>{
 
 
 try{
@@ -373,7 +338,6 @@ String(req.body.url || "")
 .trim();
 
 
-
 const city =
 String(req.body.city || "")
 .trim();
@@ -382,7 +346,8 @@ String(req.body.city || "")
 
 if(!target){
 
-return res.status(400).json({
+return res.status(400)
+.json({
 
 error:
 "Informe uma URL"
@@ -393,20 +358,44 @@ error:
 
 
 
-
 const start =
 new URL(target);
 
 
 
-const queue=[
-start.href
+
+const priorityPages=[
+
+"/contato",
+"/contact",
+"/sobre",
+"/about",
+"/equipe",
+"/profissionais",
+"/servicos",
+"/lista"
+
 ];
+
+
+
+const queue=[start.href];
+
+
+
+priorityPages.forEach(p=>{
+
+queue.push(
+new URL(p,start.href).href
+);
+
+});
+
+
 
 
 const visited =
 new Set();
-
 
 
 const contacts=[];
@@ -418,16 +407,15 @@ new Set();
 
 
 
+
 while(
 queue.length &&
-visited.size < 20
+visited.size < 200
 ){
-
 
 
 const current =
 queue.shift();
-
 
 
 
@@ -437,11 +425,8 @@ visited.has(current) ||
 current,
 start.href
 )
-){
-
+)
 continue;
-
-}
 
 
 
@@ -450,16 +435,12 @@ visited.add(current);
 
 
 const html =
-await fetchPage(current)
-.catch(()=>null);
+await fetchPage(current);
 
 
 
-if(!html){
-
+if(!html)
 continue;
-
-}
 
 
 
@@ -477,20 +458,22 @@ found.forEach(item=>{
 
 const key =
 item.type +
-":" +
+":"+
 item.value;
 
 
 
-if(!unique.has(key)){
-
+if(
+item.value &&
+!unique.has(key)
+){
 
 unique.add(key);
 
 contacts.push(item);
 
-
 }
+
 
 
 });
@@ -498,14 +481,14 @@ contacts.push(item);
 
 
 
-// encontra links internos
 
 const $ =
 cheerio.load(html);
 
 
 
-$("a[href]").each((_,el)=>{
+$("a[href]")
+.each((_,el)=>{
 
 
 const link =
@@ -539,18 +522,38 @@ queue.push(link);
 
 
 
+
+const first100 =
+contacts.slice(0,100);
+
+
+
 res.json({
 
-status:
-"success",
+status:"success",
 
 pagesVisited:
 visited.size,
 
+
 totalContacts:
 contacts.length,
 
-contacts
+
+hasMore:
+contacts.length > 100,
+
+
+nextPage:
+contacts.length > 100 ?
+"Existe mais leads disponíveis"
+:
+null,
+
+
+contacts:
+first100
+
 
 });
 
@@ -559,7 +562,8 @@ contacts
 }catch(error){
 
 
-res.status(500).json({
+res.status(500)
+.json({
 
 error:
 error.message
@@ -577,16 +581,13 @@ error.message
 
 
 
-// ===============================
-// START SERVER
-// ===============================
 
-app.listen(PORT,()=>{
-
+app.listen(
+PORT,
+()=>{
 
 console.log(
 `API online na porta ${PORT}`
 );
-
 
 });
