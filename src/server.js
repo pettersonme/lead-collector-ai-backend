@@ -3,26 +3,25 @@ import cors from "cors";
 import * as cheerio from "cheerio";
 import { URL } from "node:url";
 
+
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 
 
-app.use(cors({ origin:true }));
-app.use(express.json({limit:"500kb"}));
+app.use(cors({origin:true}));
+
+app.use(express.json({
+    limit:"1mb"
+}));
 
 
 
 function cleanPhone(value){
 
-    const phone = String(value || "")
+    return String(value || "")
     .replace(/\D/g,"");
 
-    if(phone.length >= 10 && phone.length <= 15){
-        return phone;
-    }
-
-    return "";
 }
 
 
@@ -33,9 +32,11 @@ function cleanEmail(value){
     .trim()
     .toLowerCase();
 
+
     if(email.includes("@")){
         return email;
     }
+
 
     return "";
 
@@ -43,18 +44,19 @@ function cleanEmail(value){
 
 
 
-
-function absolute(url,base){
+function absolute(link,base){
 
     try{
-        return new URL(url,base).href;
-    }
-    catch{
+
+        return new URL(link,base).href;
+
+    }catch{
+
         return null;
+
     }
 
 }
-
 
 
 
@@ -64,8 +66,7 @@ function sameDomain(a,b){
 
         return new URL(a).hostname === new URL(b).hostname;
 
-    }
-    catch{
+    }catch{
 
         return false;
 
@@ -78,20 +79,27 @@ function sameDomain(a,b){
 
 async function fetchHTML(url){
 
+
     try{
 
+
         const response = await fetch(url,{
+
             headers:{
                 "User-Agent":
-                "Mozilla/5.0 Chrome LeadCollectorAI"
+                "Mozilla/5.0"
             },
+
             signal:
             AbortSignal.timeout(15000)
+
         });
 
 
         const type =
-        response.headers.get("content-type") || "";
+        response.headers.get(
+            "content-type"
+        ) || "";
 
 
         if(!type.includes("text/html")){
@@ -102,75 +110,73 @@ async function fetchHTML(url){
         return await response.text();
 
 
+
     }catch(error){
+
+        console.log(
+            "Erro:",
+            url
+        );
 
         return "";
 
     }
 
+
 }
 
 
 
 
 
-function extractProfileData(html,url){
+
+function extractData(html,url){
 
 
     const $ = cheerio.load(html);
 
 
-    let result = {
+    let data={
 
         name:"",
         phone:"",
         email:"",
-        url
+        url:url
 
     };
 
 
 
-    const title =
+    // nome
+
+    data.name =
     $("h1").first().text().trim()
     ||
     $("title").text().trim();
 
 
-    result.name = title;
 
 
+    // whatsapp tel
 
-    $("a[href^='tel:']").each((_,el)=>{
-
-        if(!result.phone){
-
-            result.phone =
-            cleanPhone(
-                $(el)
-                .attr("href")
-                .replace("tel:","")
-            );
-
-        }
-
-    });
+    $("a").each((_,el)=>{
 
 
+        const href =
+        $(el).attr("href") || "";
 
-    $("a[href^='mailto:']").each((_,el)=>{
 
+        if(
+            href.includes("wa.me")
+            ||
+            href.includes("whatsapp")
+        ){
 
-        if(!result.email){
-
-            result.email =
-            cleanEmail(
-                $(el)
-                .attr("href")
-                .replace("mailto:","")
-            );
+            data.phone =
+            cleanPhone(href);
 
         }
+
 
 
     });
@@ -178,58 +184,72 @@ function extractProfileData(html,url){
 
 
 
-    const text =
-    $("body")
-    .text()
-    .replace(/\s+/g," ");
+
+    // telefone normal
+
+    if(!data.phone){
 
 
+        const text =
+        $("body")
+        .text()
+        .replace(/\s+/g," ");
 
-
-    if(!result.phone){
 
 
         const phones =
         text.match(
-        /(?:\+?55)?\s?\(?\d{2}\)?\s?\d{4,5}[- ]?\d{4}/g
+        /(\(?\d{2}\)?\s?\d{4,5}[- ]?\d{4})/g
         );
 
 
-        if(phones && phones.length){
+        if(phones){
 
-            result.phone =
-            cleanPhone(phones[0]);
+            data.phone =
+            cleanPhone(
+                phones[0]
+            );
 
         }
+
 
     }
 
 
 
 
-    if(!result.email){
+    // email
 
 
-        const emails =
-        text.match(
-        /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
+    const body =
+    $("body")
+    .text();
+
+
+
+    const emails =
+    body.match(
+    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
+    );
+
+
+    if(emails){
+
+        data.email =
+        cleanEmail(
+            emails[0]
         );
-
-
-        if(emails && emails.length){
-
-            result.email =
-            cleanEmail(emails[0]);
-
-        }
 
     }
 
 
 
-    return result;
+    return data;
+
 
 }
+
+
 
 
 
@@ -238,37 +258,18 @@ function extractProfileData(html,url){
 
 app.get("/",(req,res)=>{
 
+
     res.json({
 
         status:"online",
 
         message:
-        "Lead Collector AI API funcionando"
-
-    });
-
-});
-
-
-
-
-
-
-app.get("/health",(req,res)=>{
-
-
-    res.json({
-
-        online:true,
-
-        service:
-        "Lead Collector AI"
+        "Lead Collector AI funcionando"
 
     });
 
 
 });
-
 
 
 
@@ -293,7 +294,7 @@ try{
         return res.status(400).json({
 
             error:
-            "Informe uma URL"
+            "URL obrigatória"
 
         });
 
@@ -303,8 +304,8 @@ try{
 
 
     const base =
-    new URL(target)
-    .href;
+    new URL(target).href;
+
 
 
 
@@ -313,12 +314,14 @@ try{
 
 
 
-    const profileLinks =
+    const profiles =
     new Set();
 
 
 
-    const queue=[base];
+    const queue=[
+        base
+    ];
 
 
 
@@ -326,11 +329,7 @@ try{
 
 
 
-
-    while(
-        queue.length &&
-        profileLinks.size < 300
-    ){
+    while(queue.length){
 
 
 
@@ -339,9 +338,7 @@ try{
 
 
 
-        if(
-            visited.has(current)
-        ){
+        if(visited.has(current)){
             continue;
         }
 
@@ -372,45 +369,67 @@ try{
 
 
 
+
         $("a[href]").each((_,el)=>{
+
+
+            const href =
+            $(el).attr("href");
+
 
 
             const link =
             absolute(
-                $(el).attr("href"),
+                href,
                 current
             );
 
 
 
-            if(
-                link &&
-                sameDomain(link,base)
-            ){
-
-
-                if(
-                    link !== base
-                ){
-
-                    profileLinks.add(link);
-
-                }
-
-
-                if(
-                    !visited.has(link)
-                    &&
-                    queue.length < 100
-                ){
-
-                    queue.push(link);
-
-                }
-
-
+            if(!link){
+                return;
             }
 
+
+
+
+            if(!sameDomain(link,base)){
+                return;
+            }
+
+
+
+
+            const path =
+            new URL(link)
+            .pathname;
+
+
+
+
+            /*
+              pega somente:
+
+              /tai
+              /nome
+              
+              ignora:
+
+              /
+              /login
+              /categorias
+            */
+
+
+            if(
+                path.split("/")
+                .filter(Boolean)
+                .length === 1
+            ){
+
+                profiles.add(link);
+
+            }
 
 
         });
@@ -424,15 +443,14 @@ try{
 
 
 
+
     const contacts=[];
 
 
-    for(
-        const profile of
-        Array.from(profileLinks)
-        .slice(0,100)
-    ){
 
+    for(
+        const profile of profiles
+    ){
 
 
         const html =
@@ -447,22 +465,14 @@ try{
 
 
         const data =
-        extractProfileData(
+        extractData(
             html,
             profile
         );
 
 
 
-        if(
-            data.phone ||
-            data.email
-        ){
-
-            contacts.push(data);
-
-        }
-
+        contacts.push(data);
 
 
     }
@@ -471,32 +481,21 @@ try{
 
 
 
+
     res.json({
 
-        status:"success",
+        status:"ok",
 
-        message:
-        "Processamento concluído",
+        pagesVisited:
+        pages,
 
-        pagesVisited:pages,
 
         profilesFound:
-        profileLinks.size,
+        profiles.size,
 
-        totalContacts:
+
+        total:
         contacts.length,
-
-
-        hasMore:
-        profileLinks.size > 100,
-
-
-        next:
-        profileLinks.size > 100
-        ?
-        "Existem mais perfis para processar"
-        :
-        null,
 
 
         contacts
@@ -507,8 +506,11 @@ try{
 
 
 
-}
-catch(error){
+
+}catch(error){
+
+
+    console.log(error);
 
 
     res.status(500).json({
@@ -517,6 +519,7 @@ catch(error){
         error.message
 
     });
+
 
 
 }
@@ -530,11 +533,13 @@ catch(error){
 
 
 
+
 app.listen(PORT,()=>{
 
 
 console.log(
-`Lead Collector AI online na porta ${PORT}`
+"Lead Collector AI rodando na porta "
++PORT
 );
 
 
