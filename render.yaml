@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: lead-collector-ai-api
+    env: node
+    plan: free
+    rootDir: backend-render
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
