@@ -7,23 +7,35 @@ const app = express();
 
 const PORT = process.env.PORT || 10000;
 
-
 app.use(cors({origin:true}));
-app.use(express.json({limit:"1mb"}));
+app.use(express.json({limit:"2mb"}));
 
 
-// ===============================
-// NORMALIZADORES
-// ===============================
+// =========================
+// HELPERS
+// =========================
+
+function absolute(link, base){
+
+    try{
+        return new URL(link, base).href;
+    }catch{
+        return null;
+    }
+
+}
+
 
 function cleanPhone(value){
 
-    const phone = String(value || "")
+    const p = String(value || "")
     .replace(/\D/g,"");
 
-    if(phone.length >= 10 && phone.length <= 15){
-        return phone;
+
+    if(p.length >= 10 && p.length <= 15){
+        return p;
     }
+
 
     return "";
 
@@ -32,13 +44,18 @@ function cleanPhone(value){
 
 function cleanEmail(value){
 
-    const email = String(value || "")
+    const e = String(value || "")
     .trim()
     .toLowerCase();
 
-    if(email.includes("@")){
-        return email;
+
+    if(
+        e.includes("@") &&
+        e.includes(".")
+    ){
+        return e;
     }
+
 
     return "";
 
@@ -46,45 +63,23 @@ function cleanEmail(value){
 
 
 
-function absolute(url,base){
-
-    try{
-        return new URL(url,base).href;
-    }
-    catch{
-        return null;
-    }
-
-}
-
-
-
-// ===============================
-// BAIXAR PAGINA
-// ===============================
-
-async function fetchHTML(url){
+async function getPage(url){
 
     try{
 
         const response = await fetch(url,{
             headers:{
                 "User-Agent":
-                "Mozilla/5.0 LeadCollectorAI"
+                "Mozilla/5.0"
             }
         });
 
 
-        const type =
-        response.headers.get("content-type") || "";
+        const html =
+        await response.text();
 
 
-        if(!type.includes("text/html")){
-            return "";
-        }
-
-
-        return await response.text();
+        return html;
 
 
     }catch{
@@ -97,189 +92,289 @@ async function fetchHTML(url){
 
 
 
-// ===============================
-// EXTRAIR PERFIS
-// ===============================
+// =========================
+// ENCONTRAR PERFIS
+// =========================
 
-function findProfileLinks(html,base){
+function extractProfiles(html,base){
 
 
     const $ = cheerio.load(html);
 
-    const links=[];
+    let links=[];
 
 
     $("a[href]").each((_,el)=>{
 
 
-        const href =
-        absolute(
-            $(el).attr("href"),
-            base
-        );
+        let href =
+        $(el).attr("href");
 
 
         if(!href) return;
 
 
         if(
-            href !== base &&
-            href.includes("/")
+            href.startsWith("#") ||
+            href.startsWith("javascript")
         ){
+            return;
+        }
 
-            links.push(href);
+
+        const url =
+        absolute(
+            href,
+            base
+        );
+
+
+        if(!url) return;
+
+
+
+        // remove lixo
+
+        const bad=[
+            "login",
+            "entrar",
+            "termos",
+            "politica",
+            "contato",
+            "facebook",
+            "instagram",
+            "youtube",
+            "javascript"
+        ];
+
+
+
+        if(
+            bad.some(x =>
+            url.toLowerCase()
+            .includes(x))
+        ){
+            return;
+        }
+
+
+
+        // pega somente paginas com slug
+
+        const path =
+        new URL(url).pathname;
+
+
+        const parts =
+        path.split("/")
+        .filter(Boolean);
+
+
+
+        if(parts.length >= 1){
+
+            links.push(url);
 
         }
+
 
 
     });
 
 
-    return [...new Set(links)];
+
+    return [
+        ...new Set(links)
+    ];
 
 }
 
 
 
-// ===============================
-// EXTRAIR DADOS DO PERFIL
-// ===============================
+// =========================
+// EXTRAI PERFIL
+// =========================
 
-function extractProfile(html,url){
+
+function extractData(html,url){
 
 
     const $ = cheerio.load(html);
 
 
-    let name="";
 
-
-    // tenta pegar titulo
-
-    name =
-    $("h1").first().text().trim()
-    ||
-    $("title").text().trim();
+    let nome =
+    $("h1")
+    .first()
+    .text()
+    .trim();
 
 
 
-    let phones=[];
+    if(!nome){
+
+        nome =
+        $("title")
+        .text()
+        .trim();
+
+    }
 
 
-    $("a[href^='tel:']")
-    .each((_,el)=>{
-
-        const p =
-        cleanPhone(
-            $(el)
-            .attr("href")
-            .replace("tel:","")
-        );
 
 
-        if(p)
-        phones.push(p);
+    let whatsapp="";
+    let telefone="";
+    let email="";
+
+
+
+    $("a").each((_,el)=>{
+
+
+        const href =
+        $(el)
+        .attr("href")
+        || "";
+
+
+
+        if(
+            href.includes("wa.me") ||
+            href.includes("whatsapp")
+        ){
+
+            whatsapp =
+            cleanPhone(href);
+
+        }
+
+
+
+        if(
+            href.startsWith("tel:")
+        ){
+
+            telefone =
+            cleanPhone(
+                href.replace("tel:","")
+            );
+
+        }
+
+
+
+        if(
+            href.startsWith("mailto:")
+        ){
+
+            email =
+            cleanEmail(
+                href.replace("mailto:","")
+            );
+
+        }
+
+
 
     });
 
 
 
-    let emails=[];
-
-
-    $("a[href^='mailto:']")
-    .each((_,el)=>{
-
-        const e =
-        cleanEmail(
-            $(el)
-            .attr("href")
-            .replace("mailto:","")
-        );
-
-
-        if(e)
-        emails.push(e);
-
-    });
-
-
-
-    const text =
+    const texto =
     $("body")
     .text()
     .replace(/\s+/g," ");
 
 
 
-    for(const m of text.matchAll(
-        /(?:\+?55)?\s*\(?\d{2}\)?\s*\d{4,5}[-\s]?\d{4}/g
-    )){
 
-        const p =
-        cleanPhone(m[0]);
+    if(!telefone){
 
 
-        if(p)
-        phones.push(p);
+        const phones =
+        texto.match(
+        /(?:\+55\s?)?\(?\d{2}\)?\s?\d{4,5}[- ]?\d{4}/g
+        );
+
+
+        if(phones){
+
+            telefone =
+            cleanPhone(
+                phones[0]
+            );
+
+        }
+
 
     }
 
 
 
-    for(const m of text.matchAll(
+
+    if(!email){
+
+
+        const emails =
+        texto.match(
         /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
-    )){
-
-        const e =
-        cleanEmail(m[0]);
+        );
 
 
-        if(e)
-        emails.push(e);
+        if(emails){
+
+            email =
+            cleanEmail(
+                emails[0]
+            );
+
+        }
 
     }
+
+
 
 
 
     return {
 
-        name:name || "Não identificado",
+        nome:
+        nome || "Não encontrado",
 
-        whatsapp:
-        phones[0] || "",
+        whatsapp,
 
-        phone:
-        phones.join(", "),
+        telefone,
 
-        email:
-        [...new Set(emails)].join(", "),
+        email,
 
-
-        url:url
+        urlPerfil:url
 
     };
-
 
 }
 
 
 
-// ===============================
+
+
+// =========================
 // ROTAS
-// ===============================
+// =========================
 
 
 app.get("/",(req,res)=>{
 
-    res.json({
 
-        status:"online",
+res.json({
 
-        message:
-        "Lead Collector AI API funcionando"
+status:"online",
 
-    });
+message:
+"Lead Collector AI API funcionando"
+
+});
+
 
 });
 
@@ -288,22 +383,24 @@ app.get("/",(req,res)=>{
 
 app.get("/health",(req,res)=>{
 
-    res.json({
 
-        online:true,
+res.json({
 
-        service:"Lead Collector AI"
+online:true,
 
-    });
+service:"Lead Collector AI"
+
+});
+
 
 });
 
 
 
 
-// ===============================
-// COLETOR PRINCIPAL
-// ===============================
+// =========================
+// COLETOR
+// =========================
 
 
 app.post("/api/collect",async(req,res)=>{
@@ -312,13 +409,13 @@ app.post("/api/collect",async(req,res)=>{
 try{
 
 
-const target =
+const site =
 String(req.body.url || "")
 .trim();
 
 
 
-if(!target){
+if(!site){
 
 return res.status(400)
 .json({
@@ -331,21 +428,22 @@ error:"Informe uma URL"
 
 
 
-const startHTML =
-await fetchHTML(target);
+const home =
+await getPage(site);
 
 
 
-if(!startHTML){
+if(!home){
+
 
 return res.json({
 
 status:"error",
 
-message:
-"Não foi possível acessar o site"
+message:"Site inacessível"
 
 });
+
 
 }
 
@@ -353,27 +451,27 @@ message:
 
 
 const profiles =
-findProfileLinks(
-startHTML,
-target
+extractProfiles(
+home,
+site
 );
 
 
 
-let results=[];
+
+let leads=[];
 
 
-const maxProfiles = 100;
 
-
+// máximo inicial 100
 
 for(
-const profile of profiles.slice(0,maxProfiles)
+const profile of profiles.slice(0,100)
 ){
 
 
 const html =
-await fetchHTML(profile);
+await getPage(profile);
 
 
 
@@ -381,14 +479,14 @@ if(html){
 
 
 const data =
-extractProfile(
+extractData(
 html,
 profile
 );
 
 
 
-results.push(data);
+leads.push(data);
 
 
 }
@@ -403,31 +501,35 @@ res.json({
 
 status:"success",
 
-pagesFound:
+totalPerfisEncontrados:
 profiles.length,
 
-profilesProcessed:
-results.length,
 
-hasMore:
-profiles.length > maxProfiles,
+processados:
+leads.length,
 
 
-contacts:results
+temMais:
+profiles.length > 100,
+
+
+leads
 
 
 });
 
 
 
-}
-catch(error){
+
+
+}catch(err){
 
 
 res.status(500)
 .json({
 
-error:error.message
+error:
+err.message
 
 });
 
@@ -446,7 +548,7 @@ app.listen(PORT,()=>{
 
 
 console.log(
-`API online na porta ${PORT}`
+`Lead Collector AI rodando ${PORT}`
 );
 
 
