@@ -3,33 +3,30 @@ import cors from "cors";
 import * as cheerio from "cheerio";
 import { URL } from "node:url";
 
+
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 
 
-app.use(cors({ origin:true }));
+app.use(cors({origin:true}));
 
 app.use(express.json({
-  limit:"500kb"
+  limit:"200kb"
 }));
 
 
 
 function normalizePhone(raw){
 
-  let digits = String(raw || "")
+  const digits =
+  String(raw || "")
   .replace(/\D/g,"");
-
-
-  if(digits.startsWith("55") && digits.length > 11){
-    digits = digits.substring(2);
-  }
 
 
   if(
     digits.length < 10 ||
-    digits.length > 11
+    digits.length > 15
   ){
     return "";
   }
@@ -41,68 +38,55 @@ function normalizePhone(raw){
 
 
 
-
 function normalizeEmail(raw){
 
-  let email = String(raw || "")
+  return String(raw || "")
   .trim()
   .toLowerCase();
 
-
-  if(
-    !email.includes("@") ||
-    email.includes("?") ||
-    email.includes("=")
-  ){
-    return "";
-  }
-
-
-  return email;
-
 }
-
-
 
 
 
 function sameHost(a,b){
 
-try{
+  try{
 
-return new URL(a).hostname === new URL(b).hostname;
+    return new URL(a).host === new URL(b).host;
 
-}catch{
+  }catch{
 
-return false;
+    return false;
+
+  }
 
 }
-
-}
-
 
 
 
 
 function absolute(href,base){
 
-try{
+  try{
 
-return new URL(href,base).href;
+    return new URL(href,base).href;
 
-}catch{
+  }catch{
 
-return null;
+    return null;
+
+  }
 
 }
 
-}
 
 
 
-
-
-function extractContacts(html,url,city){
+function extractContacts(
+html,
+sourceUrl,
+city
+){
 
 
 const $ = cheerio.load(html);
@@ -110,11 +94,6 @@ const $ = cheerio.load(html);
 
 const contacts=[];
 
-
-const title =
-$("title")
-.text()
-.trim();
 
 
 function add(type,value){
@@ -130,9 +109,7 @@ type,
 
 value,
 
-page:url,
-
-title,
+sourceUrl,
 
 city
 
@@ -140,7 +117,6 @@ city
 
 
 }
-
 
 
 
@@ -157,7 +133,11 @@ $(el)
 );
 
 
-add("phone",phone);
+if(phone)
+add(
+"phone",
+phone
+);
 
 
 });
@@ -175,11 +155,14 @@ normalizeEmail(
 $(el)
 .attr("href")
 .replace("mailto:","")
-.split("?")[0]
 );
 
 
-add("email",email);
+if(email)
+add(
+"email",
+email
+);
 
 
 });
@@ -196,16 +179,23 @@ $("body")
 
 
 
-
 for(
 const match of text.matchAll(
-/(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?\d{4,5}[-\s]?\d{4}/g
+/(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?(?:9?\d{4})[\s.-]?\d{4}/g
 )
 ){
 
+
+const phone =
+normalizePhone(
+match[0]
+);
+
+
+if(phone)
 add(
 "phone",
-normalizePhone(match[0])
+phone
 );
 
 
@@ -234,7 +224,9 @@ normalizeEmail(match[0])
 
 return contacts;
 
+
 }
+
 
 
 
@@ -246,26 +238,55 @@ async function fetchPage(url){
 try{
 
 
+const controller =
+new AbortController();
+
+
+const timeout =
+setTimeout(
+()=>controller.abort(),
+8000
+);
+
+
+
 const response =
-await fetch(url,{
+await fetch(
+url,
+{
+
+signal:
+controller.signal,
+
+
 headers:{
 "User-Agent":
 "Mozilla/5.0 LeadCollectorAI"
 }
-});
+
+}
+);
+
+
+
+clearTimeout(timeout);
+
 
 
 const type =
-response.headers.get(
-"content-type"
-) || "";
+response.headers
+.get("content-type")
+|| "";
 
 
 
 if(
 !type.includes("text/html")
-)
+){
+
 return null;
+
+}
 
 
 
@@ -275,12 +296,18 @@ return await response.text();
 
 }catch{
 
+
 return null;
 
+
 }
 
 
+
 }
+
+
+
 
 
 
@@ -300,6 +327,8 @@ message:
 
 
 });
+
+
 
 
 
@@ -326,27 +355,40 @@ service:
 
 
 
-app.post("/api/collect",
+
+
+app.post(
+"/api/collect",
 async(req,res)=>{
 
 
 try{
 
 
+
 const target =
-String(req.body.url || "")
+String(
+req.body.url || ""
+)
 .trim();
+
 
 
 const city =
-String(req.body.city || "")
+String(
+req.body.city || ""
+)
 .trim();
+
+
 
 
 
 if(!target){
 
-return res.status(400)
+
+return res
+.status(400)
 .json({
 
 error:
@@ -354,7 +396,10 @@ error:
 
 });
 
+
 }
+
+
 
 
 
@@ -363,34 +408,9 @@ new URL(target);
 
 
 
-
-const priorityPages=[
-
-"/contato",
-"/contact",
-"/sobre",
-"/about",
-"/equipe",
-"/profissionais",
-"/servicos",
-"/lista"
-
+const queue=[
+start.href
 ];
-
-
-
-const queue=[start.href];
-
-
-
-priorityPages.forEach(p=>{
-
-queue.push(
-new URL(p,start.href).href
-);
-
-});
-
 
 
 
@@ -398,7 +418,9 @@ const visited =
 new Set();
 
 
+
 const contacts=[];
+
 
 
 const unique =
@@ -409,9 +431,12 @@ new Set();
 
 
 while(
+
 queue.length &&
-visited.size < 200
+visited.size < 50
+
 ){
+
 
 
 const current =
@@ -419,18 +444,26 @@ queue.shift();
 
 
 
+
 if(
-visited.has(current) ||
+
+visited.has(current)
+||
 !sameHost(
 current,
 start.href
 )
-)
+
+){
+
 continue;
+
+}
 
 
 
 visited.add(current);
+
 
 
 
@@ -444,6 +477,7 @@ continue;
 
 
 
+
 const found =
 extractContacts(
 html,
@@ -453,18 +487,19 @@ city
 
 
 
+
+
 found.forEach(item=>{
 
 
 const key =
 item.type +
-":"+
+":" +
 item.value;
 
 
 
 if(
-item.value &&
 !unique.has(key)
 ){
 
@@ -475,8 +510,9 @@ contacts.push(item);
 }
 
 
-
 });
+
+
 
 
 
@@ -484,6 +520,7 @@ contacts.push(item);
 
 const $ =
 cheerio.load(html);
+
 
 
 
@@ -499,18 +536,24 @@ current
 
 
 
+
 if(
-link &&
+
+link
+&&
 sameHost(
 link,
 start.href
-) &&
+)
+&&
 !visited.has(link)
+
 ){
 
 queue.push(link);
 
 }
+
 
 
 });
@@ -523,14 +566,16 @@ queue.push(link);
 
 
 
-const first100 =
-contacts.slice(0,100);
-
-
-
 res.json({
 
-status:"success",
+
+status:
+"success",
+
+
+message:
+"Processamento concluído",
+
 
 pagesVisited:
 visited.size,
@@ -540,29 +585,29 @@ totalContacts:
 contacts.length,
 
 
-hasMore:
-contacts.length > 100,
+hasMorePages:
+queue.length > 0,
 
 
-nextPage:
-contacts.length > 100 ?
-"Existe mais leads disponíveis"
-:
-null,
+nextPagesAvailable:
+queue.length,
 
 
-contacts:
-first100
+contacts
 
 
 });
 
 
 
+
+
 }catch(error){
 
 
-res.status(500)
+
+res
+.status(500)
 .json({
 
 error:
@@ -571,11 +616,14 @@ error.message
 });
 
 
+
 }
 
 
 
 });
+
+
 
 
 
@@ -586,8 +634,11 @@ app.listen(
 PORT,
 ()=>{
 
+
 console.log(
 `API online na porta ${PORT}`
 );
 
-});
+
+}
+);
