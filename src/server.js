@@ -7,33 +7,31 @@ const app = express();
 
 const PORT = process.env.PORT || 10000;
 
-app.use(cors());
-app.use(express.json({ limit: "2mb" }));
 
+app.use(cors({
+    origin:"*"
+}));
 
-// TESTE DO SERVIDOR
-app.get("/", (req,res)=>{
-    res.json({
-        status:"online",
-        message:"Lead Collector AI API funcionando"
-    });
-});
-
-
-app.get("/health",(req,res)=>{
-    res.json({
-        online:true
-    });
-});
+app.use(express.json({
+    limit:"2mb"
+}));
 
 
 
 function cleanPhone(value){
 
-    return String(value || "")
+    const phone = String(value || "")
     .replace(/\D/g,"");
 
+
+    if(phone.length >= 10 && phone.length <= 15){
+        return phone;
+    }
+
+    return "";
+
 }
+
 
 
 function cleanEmail(value){
@@ -42,7 +40,16 @@ function cleanEmail(value){
     .trim()
     .toLowerCase();
 
-    return email.includes("@") ? email : "";
+
+    if(
+        email.includes("@") &&
+        email.includes(".")
+    ){
+        return email;
+    }
+
+
+    return "";
 
 }
 
@@ -51,10 +58,13 @@ function cleanEmail(value){
 function absolute(link,base){
 
     try{
+
         return new URL(link,base).href;
-    }
-    catch{
+
+    }catch{
+
         return null;
+
     }
 
 }
@@ -65,7 +75,10 @@ function sameDomain(a,b){
 
     try{
 
-        return new URL(a).hostname === new URL(b).hostname;
+        return (
+            new URL(a).hostname ===
+            new URL(b).hostname
+        );
 
     }catch{
 
@@ -82,19 +95,34 @@ async function fetchHTML(url){
     try{
 
         const response = await fetch(url,{
+
             headers:{
+
                 "User-Agent":
-                "Mozilla/5.0"
-            }
+                "Mozilla/5.0 LeadCollectorAI"
+
+            },
+
+            signal:
+            AbortSignal.timeout(10000)
+
         });
+
+
+        const type =
+        response.headers.get("content-type") || "";
+
+
+        if(!type.includes("text/html")){
+            return "";
+        }
 
 
         return await response.text();
 
 
-    }catch(e){
+    }catch(error){
 
-        console.log(e);
         return "";
 
     }
@@ -103,46 +131,64 @@ async function fetchHTML(url){
 
 
 
-function extract(html,url){
-
-    const $ = cheerio.load(html);
 
 
-    let data={
+function extractData(html,url){
+
+
+    const $ =
+    cheerio.load(html);
+
+
+    const result = {
+
 
         nome:"",
+
         whatsapp:"",
+
         email:"",
+
         url:url
+
 
     };
 
 
 
-    data.nome =
+    result.nome =
     $("h1").first().text().trim()
     ||
     $("title").text().trim();
 
 
 
+
+
     $("a").each((i,el)=>{
+
 
         const href =
         $(el).attr("href") || "";
 
 
-        if(href.includes("whatsapp")){
+        if(
+            href.includes("wa.me")
+            ||
+            href.includes("whatsapp")
+        ){
 
-            data.whatsapp =
+            result.whatsapp =
             href;
 
         }
 
 
-        if(href.includes("tel:")){
+        if(
+            href.startsWith("tel:")
+        ){
 
-            data.whatsapp =
+            result.whatsapp =
             cleanPhone(
                 href.replace("tel:","")
             );
@@ -150,9 +196,12 @@ function extract(html,url){
         }
 
 
-        if(href.includes("mailto:")){
 
-            data.email =
+        if(
+            href.startsWith("mailto:")
+        ){
+
+            result.email =
             cleanEmail(
                 href.replace("mailto:","")
             );
@@ -164,6 +213,7 @@ function extract(html,url){
 
 
 
+
     const texto =
     $("body")
     .text()
@@ -171,17 +221,47 @@ function extract(html,url){
 
 
 
-    if(!data.email){
 
-        const email =
+    if(!result.whatsapp){
+
+
+        const telefones =
         texto.match(
-        /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
+        /(\+55\s?)?\(?\d{2}\)?\s?\d{4,5}[- ]?\d{4}/g
         );
 
 
-        if(email){
+        if(telefones){
 
-            data.email=email[0];
+            result.whatsapp =
+            cleanPhone(
+                telefones[0]
+            );
+
+        }
+
+
+    }
+
+
+
+
+
+    if(!result.email){
+
+
+        const emails =
+        texto.match(
+        /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
+        );
+
+
+        if(emails){
+
+            result.email =
+            cleanEmail(
+                emails[0]
+            );
 
         }
 
@@ -189,28 +269,52 @@ function extract(html,url){
 
 
 
-    if(!data.whatsapp){
+    return result;
 
-        const phone =
-        texto.match(
-        /\(?\d{2}\)?\s?\d{4,5}-?\d{4}/
-        );
-
-
-        if(phone){
-
-            data.whatsapp =
-            cleanPhone(phone[0]);
-
-        }
-
-    }
-
-
-
-    return data;
 
 }
+
+
+
+
+
+
+// TESTE DO SERVIDOR
+
+app.get("/",(req,res)=>{
+
+
+    res.json({
+
+        status:"online",
+
+        mensagem:
+        "Lead Collector AI funcionando"
+
+    });
+
+
+});
+
+
+
+
+app.get("/health",(req,res)=>{
+
+
+    res.json({
+
+        online:true,
+
+        servidor:
+        "Lead Collector AI"
+
+    });
+
+
+});
+
+
 
 
 
@@ -221,122 +325,219 @@ app.post("/api/collect", async(req,res)=>{
 try{
 
 
-const site=req.body.url;
+    const target =
+    String(req.body.url || "")
+    .trim();
 
 
-if(!site){
 
-return res.status(400).json({
-error:"URL obrigatória"
-});
+    if(!target){
+
+        return res.status(400).json({
+
+            erro:
+            "Informe uma URL"
+
+        });
+
+    }
+
+
+
+
+    const base =
+    new URL(target).href;
+
+
+
+    const visitadas =
+    new Set();
+
+
+    const fila =
+    [base];
+
+
+    const paginas =
+    new Set();
+
+
+
+    let totalPaginas = 0;
+
+
+
+
+    while(
+        fila.length &&
+        paginas.size < 80
+    ){
+
+
+        const atual =
+        fila.shift();
+
+
+
+        if(visitadas.has(atual))
+        continue;
+
+
+
+        visitadas.add(atual);
+
+
+
+        const html =
+        await fetchHTML(atual);
+
+
+
+        if(!html)
+        continue;
+
+
+
+        totalPaginas++;
+
+
+        const $ =
+        cheerio.load(html);
+
+
+
+        $("a[href]").each((i,el)=>{
+
+
+            const link =
+            absolute(
+                $(el).attr("href"),
+                atual
+            );
+
+
+
+            if(
+                link &&
+                sameDomain(link,base)
+            ){
+
+                if(link !== base){
+
+                    paginas.add(link);
+
+                }
+
+
+                if(
+                    fila.length < 80 &&
+                    !visitadas.has(link)
+                ){
+
+                    fila.push(link);
+
+                }
+
+            }
+
+
+        });
+
+
+    }
+
+
+
+
+    const contatos=[];
+
+
+
+
+    for(
+        const pagina of paginas
+    ){
+
+
+        const html =
+        await fetchHTML(pagina);
+
+
+        if(!html)
+        continue;
+
+
+
+        const dados =
+        extractData(
+            html,
+            pagina
+        );
+
+
+
+        if(
+            dados.whatsapp ||
+            dados.email
+        ){
+
+            contatos.push(dados);
+
+        }
+
+
+    }
+
+
+
+
+
+    res.json({
+
+        sucesso:true,
+
+        paginasVisitadas:
+        totalPaginas,
+
+
+        contatosEncontrados:
+        contatos.length,
+
+
+        contatos
+
+
+    });
+
+
+
+
+}catch(error){
+
+
+    res.status(500).json({
+
+        erro:
+        error.message
+
+    });
+
 
 }
 
 
-
-let html =
-await fetchHTML(site);
-
-
-
-const $=cheerio.load(html);
-
-
-
-let links=[];
-
-
-$("a").each((i,el)=>{
-
-
-let href =
-absolute(
-$(el).attr("href"),
-site
-);
-
-
-
-if(
-href &&
-sameDomain(href,site)
-){
-
-links.push(href);
-
-}
-
-
 });
 
-
-
-links=[
-...new Set(links)
-];
-
-
-
-let contatos=[];
-
-
-for(
-const link of links.slice(0,100)
-){
-
-const page =
-await fetchHTML(link);
-
-
-if(page){
-
-const dados =
-extract(page,link);
-
-
-contatos.push(dados);
-
-}
-
-}
-
-
-
-res.json({
-
-status:"ok",
-
-paginasVisitadas:
-links.length,
-
-contatos
-
-});
-
-
-}catch(e){
-
-
-res.status(500).json({
-
-erro:e.message
-
-});
-
-
-}
-
-
-
-});
 
 
 
 
 app.listen(PORT,()=>{
 
+
 console.log(
-"Servidor rodando na porta "+PORT
+"Lead Collector AI rodando na porta "+PORT
 );
+
 
 });
