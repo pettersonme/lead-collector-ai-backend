@@ -3,201 +3,110 @@ import cors from "cors";
 import * as cheerio from "cheerio";
 import { URL } from "node:url";
 
-
 const app = express();
 
 const PORT = process.env.PORT || 10000;
 
 
-app.use(cors({origin:true}));
-
-app.use(express.json({
-  limit:"200kb"
-}));
+app.use(cors({ origin:true }));
+app.use(express.json({limit:"500kb"}));
 
 
 
-function normalizePhone(raw){
+function cleanPhone(value){
 
-  const digits =
-  String(raw || "")
-  .replace(/\D/g,"");
+    const phone = String(value || "")
+    .replace(/\D/g,"");
 
+    if(phone.length >= 10 && phone.length <= 15){
+        return phone;
+    }
 
-  if(
-    digits.length < 10 ||
-    digits.length > 15
-  ){
     return "";
-  }
-
-
-  return digits;
-
 }
 
 
 
-function normalizeEmail(raw){
+function cleanEmail(value){
 
-  return String(raw || "")
-  .trim()
-  .toLowerCase();
+    const email = String(value || "")
+    .trim()
+    .toLowerCase();
 
-}
+    if(email.includes("@")){
+        return email;
+    }
 
-
-
-function sameHost(a,b){
-
-  try{
-
-    return new URL(a).host === new URL(b).host;
-
-  }catch{
-
-    return false;
-
-  }
+    return "";
 
 }
 
 
 
 
-function absolute(href,base){
+function absolute(url,base){
 
-  try{
-
-    return new URL(href,base).href;
-
-  }catch{
-
-    return null;
-
-  }
+    try{
+        return new URL(url,base).href;
+    }
+    catch{
+        return null;
+    }
 
 }
 
 
 
 
-function extractContacts(
-html,
-sourceUrl,
-city
-){
+function sameDomain(a,b){
 
+    try{
 
-const $ = cheerio.load(html);
+        return new URL(a).hostname === new URL(b).hostname;
 
+    }
+    catch{
 
-const contacts=[];
+        return false;
 
-
-
-function add(type,value){
-
-
-if(!value)
-return;
-
-
-contacts.push({
-
-type,
-
-value,
-
-sourceUrl,
-
-city
-
-});
-
+    }
 
 }
 
 
 
 
-$("a[href^='tel:']")
-.each((_,el)=>{
+async function fetchHTML(url){
+
+    try{
+
+        const response = await fetch(url,{
+            headers:{
+                "User-Agent":
+                "Mozilla/5.0 Chrome LeadCollectorAI"
+            },
+            signal:
+            AbortSignal.timeout(15000)
+        });
 
 
-const phone =
-normalizePhone(
-$(el)
-.attr("href")
-.replace("tel:","")
-);
+        const type =
+        response.headers.get("content-type") || "";
 
 
-if(phone)
-add(
-"phone",
-phone
-);
+        if(!type.includes("text/html")){
+            return "";
+        }
 
 
-});
+        return await response.text();
 
 
+    }catch(error){
 
+        return "";
 
-
-$("a[href^='mailto:']")
-.each((_,el)=>{
-
-
-const email =
-normalizeEmail(
-$(el)
-.attr("href")
-.replace("mailto:","")
-);
-
-
-if(email)
-add(
-"email",
-email
-);
-
-
-});
-
-
-
-
-
-const text =
-$("body")
-.text()
-.replace(/\s+/g," ");
-
-
-
-
-for(
-const match of text.matchAll(
-/(?:\+?55[\s.-]?)?(?:\(?\d{2}\)?[\s.-]?)?(?:9?\d{4})[\s.-]?\d{4}/g
-)
-){
-
-
-const phone =
-normalizePhone(
-match[0]
-);
-
-
-if(phone)
-add(
-"phone",
-phone
-);
-
+    }
 
 }
 
@@ -205,108 +114,122 @@ phone
 
 
 
-for(
-const match of text.matchAll(
-/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
-)
-){
+function extractProfileData(html,url){
 
 
-add(
-"email",
-normalizeEmail(match[0])
-);
+    const $ = cheerio.load(html);
 
+
+    let result = {
+
+        name:"",
+        phone:"",
+        email:"",
+        url
+
+    };
+
+
+
+    const title =
+    $("h1").first().text().trim()
+    ||
+    $("title").text().trim();
+
+
+    result.name = title;
+
+
+
+    $("a[href^='tel:']").each((_,el)=>{
+
+        if(!result.phone){
+
+            result.phone =
+            cleanPhone(
+                $(el)
+                .attr("href")
+                .replace("tel:","")
+            );
+
+        }
+
+    });
+
+
+
+    $("a[href^='mailto:']").each((_,el)=>{
+
+
+        if(!result.email){
+
+            result.email =
+            cleanEmail(
+                $(el)
+                .attr("href")
+                .replace("mailto:","")
+            );
+
+        }
+
+
+    });
+
+
+
+
+    const text =
+    $("body")
+    .text()
+    .replace(/\s+/g," ");
+
+
+
+
+    if(!result.phone){
+
+
+        const phones =
+        text.match(
+        /(?:\+?55)?\s?\(?\d{2}\)?\s?\d{4,5}[- ]?\d{4}/g
+        );
+
+
+        if(phones && phones.length){
+
+            result.phone =
+            cleanPhone(phones[0]);
+
+        }
+
+    }
+
+
+
+
+    if(!result.email){
+
+
+        const emails =
+        text.match(
+        /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig
+        );
+
+
+        if(emails && emails.length){
+
+            result.email =
+            cleanEmail(emails[0]);
+
+        }
+
+    }
+
+
+
+    return result;
 
 }
-
-
-
-return contacts;
-
-
-}
-
-
-
-
-
-
-async function fetchPage(url){
-
-
-try{
-
-
-const controller =
-new AbortController();
-
-
-const timeout =
-setTimeout(
-()=>controller.abort(),
-8000
-);
-
-
-
-const response =
-await fetch(
-url,
-{
-
-signal:
-controller.signal,
-
-
-headers:{
-"User-Agent":
-"Mozilla/5.0 LeadCollectorAI"
-}
-
-}
-);
-
-
-
-clearTimeout(timeout);
-
-
-
-const type =
-response.headers
-.get("content-type")
-|| "";
-
-
-
-if(
-!type.includes("text/html")
-){
-
-return null;
-
-}
-
-
-
-return await response.text();
-
-
-
-}catch{
-
-
-return null;
-
-
-}
-
-
-
-}
-
-
 
 
 
@@ -315,19 +238,16 @@ return null;
 
 app.get("/",(req,res)=>{
 
+    res.json({
 
-res.json({
+        status:"online",
 
-status:"online",
+        message:
+        "Lead Collector AI API funcionando"
 
-message:
-"Lead Collector AI API funcionando"
-
-});
-
+    });
 
 });
-
 
 
 
@@ -337,284 +257,266 @@ message:
 app.get("/health",(req,res)=>{
 
 
-res.json({
+    res.json({
 
-online:true,
+        online:true,
 
-service:
-"Lead Collector AI"
+        service:
+        "Lead Collector AI"
+
+    });
+
 
 });
 
 
-});
 
 
 
 
 
 
-
-
-
-app.post(
-"/api/collect",
-async(req,res)=>{
+app.post("/api/collect",async(req,res)=>{
 
 
 try{
 
 
-
-const target =
-String(
-req.body.url || ""
-)
-.trim();
+    const target =
+    String(req.body.url || "")
+    .trim();
 
 
 
-const city =
-String(
-req.body.city || ""
-)
-.trim();
+    if(!target){
+
+        return res.status(400).json({
+
+            error:
+            "Informe uma URL"
+
+        });
+
+    }
+
+
+
+
+    const base =
+    new URL(target)
+    .href;
+
+
+
+    const visited =
+    new Set();
+
+
+
+    const profileLinks =
+    new Set();
+
+
+
+    const queue=[base];
+
+
+
+    let pages=0;
+
+
+
+
+    while(
+        queue.length &&
+        profileLinks.size < 300
+    ){
+
+
+
+        const current =
+        queue.shift();
+
+
+
+        if(
+            visited.has(current)
+        ){
+            continue;
+        }
+
+
+
+        visited.add(current);
+
+
+
+        const html =
+        await fetchHTML(current);
+
+
+
+        if(!html){
+            continue;
+        }
+
+
+
+        pages++;
+
+
+
+        const $ =
+        cheerio.load(html);
+
+
+
+
+        $("a[href]").each((_,el)=>{
+
+
+            const link =
+            absolute(
+                $(el).attr("href"),
+                current
+            );
+
+
+
+            if(
+                link &&
+                sameDomain(link,base)
+            ){
+
+
+                if(
+                    link !== base
+                ){
+
+                    profileLinks.add(link);
+
+                }
+
+
+                if(
+                    !visited.has(link)
+                    &&
+                    queue.length < 100
+                ){
+
+                    queue.push(link);
+
+                }
+
+
+            }
+
+
+
+        });
+
+
+
+    }
 
 
 
 
 
-if(!target){
+
+    const contacts=[];
 
 
-return res
-.status(400)
-.json({
+    for(
+        const profile of
+        Array.from(profileLinks)
+        .slice(0,100)
+    ){
 
-error:
-"Informe uma URL"
 
-});
+
+        const html =
+        await fetchHTML(profile);
+
+
+
+        if(!html){
+            continue;
+        }
+
+
+
+        const data =
+        extractProfileData(
+            html,
+            profile
+        );
+
+
+
+        if(
+            data.phone ||
+            data.email
+        ){
+
+            contacts.push(data);
+
+        }
+
+
+
+    }
+
+
+
+
+
+    res.json({
+
+        status:"success",
+
+        message:
+        "Processamento concluído",
+
+        pagesVisited:pages,
+
+        profilesFound:
+        profileLinks.size,
+
+        totalContacts:
+        contacts.length,
+
+
+        hasMore:
+        profileLinks.size > 100,
+
+
+        next:
+        profileLinks.size > 100
+        ?
+        "Existem mais perfis para processar"
+        :
+        null,
+
+
+        contacts
+
+
+    });
+
+
 
 
 }
+catch(error){
 
 
+    res.status(500).json({
 
+        error:
+        error.message
 
-
-const start =
-new URL(target);
-
-
-
-const queue=[
-start.href
-];
-
-
-
-const visited =
-new Set();
-
-
-
-const contacts=[];
-
-
-
-const unique =
-new Set();
-
-
-
-
-
-while(
-
-queue.length &&
-visited.size < 50
-
-){
-
-
-
-const current =
-queue.shift();
-
-
-
-
-if(
-
-visited.has(current)
-||
-!sameHost(
-current,
-start.href
-)
-
-){
-
-continue;
-
-}
-
-
-
-visited.add(current);
-
-
-
-
-const html =
-await fetchPage(current);
-
-
-
-if(!html)
-continue;
-
-
-
-
-const found =
-extractContacts(
-html,
-current,
-city
-);
-
-
-
-
-
-found.forEach(item=>{
-
-
-const key =
-item.type +
-":" +
-item.value;
-
-
-
-if(
-!unique.has(key)
-){
-
-unique.add(key);
-
-contacts.push(item);
-
-}
-
-
-});
-
-
-
-
-
-
-
-const $ =
-cheerio.load(html);
-
-
-
-
-$("a[href]")
-.each((_,el)=>{
-
-
-const link =
-absolute(
-$(el).attr("href"),
-current
-);
-
-
-
-
-if(
-
-link
-&&
-sameHost(
-link,
-start.href
-)
-&&
-!visited.has(link)
-
-){
-
-queue.push(link);
-
-}
-
-
-
-});
-
-
-
-}
-
-
-
-
-
-res.json({
-
-
-status:
-"success",
-
-
-message:
-"Processamento concluído",
-
-
-pagesVisited:
-visited.size,
-
-
-totalContacts:
-contacts.length,
-
-
-hasMorePages:
-queue.length > 0,
-
-
-nextPagesAvailable:
-queue.length,
-
-
-contacts
-
-
-});
-
-
-
-
-
-}catch(error){
-
-
-
-res
-.status(500)
-.json({
-
-error:
-error.message
-
-});
-
+    });
 
 
 }
@@ -628,17 +530,12 @@ error.message
 
 
 
-
-
-app.listen(
-PORT,
-()=>{
+app.listen(PORT,()=>{
 
 
 console.log(
-`API online na porta ${PORT}`
+`Lead Collector AI online na porta ${PORT}`
 );
 
 
-}
-);
+});
